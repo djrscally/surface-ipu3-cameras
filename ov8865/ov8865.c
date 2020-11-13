@@ -3090,21 +3090,24 @@ static int ov8865_probe(struct i2c_client *client)
 	sensor->dev = dev;
 	sensor->i2c_client = client;
 
-	/* Graph Endpoint */
+	/* For DT-based systems */
+	if (!is_acpi_node(dev_fwnode(dev))) {
+		/* Graph Endpoint */
 
-	handle = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
-	if (!handle) {
-		dev_err(dev, "unable to find enpoint node\n");
-		return -EINVAL;
-	}
+		handle = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
+		if (!handle) {
+			dev_err(dev, "unable to find enpoint node\n");
+			return -EINVAL;
+		}
 
-	sensor->endpoint.bus_type = V4L2_MBUS_CSI2_DPHY;
+		sensor->endpoint.bus_type = V4L2_MBUS_CSI2_DPHY;
 
-	ret = v4l2_fwnode_endpoint_parse(handle, &sensor->endpoint);
-	fwnode_handle_put(handle);
-	if (ret) {
-		dev_err(dev, "failed to parse endpoint node\n");
-		return ret;
+		ret = v4l2_fwnode_endpoint_parse(handle, &sensor->endpoint);
+		fwnode_handle_put(handle);
+		if (ret) {
+			dev_err(dev, "failed to parse endpoint node\n");
+			return ret;
+		}
 	}
 
 	/* For DT-based systems */
