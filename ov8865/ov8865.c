@@ -21,6 +21,9 @@
 #include <media/v4l2-image-sizes.h>
 #include <media/v4l2-mediabus.h>
 
+static int __maybe_unused ov8865_suspend(struct device *dev);
+static int __maybe_unused ov8865_resume(struct device *dev);
+
 /* Clock rate */
 
 #define OV8865_EXTCLK_RATE			24000000
@@ -685,6 +688,8 @@ struct ov8865_sensor {
 	struct gpio_desc *xshutdn;
 	struct gpio_desc *pwdnb;
 	struct gpio_desc *led_gpio;
+
+	bool is_rpm_supported;
 };
 
 /* Static definitions */
@@ -2667,12 +2672,19 @@ static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 	struct ov8865_state *state = &sensor->state;
 	int ret = 0;
 
-	if (enable) {
+	if (enable && sensor->is_rpm_supported) {
 		ret = pm_runtime_get_sync(sensor->dev);
 		if (ret < 0) {
 			pm_runtime_put_noidle(sensor->dev);
 			return ret;
 		}
+	}
+	/* Regular PCs designed for Windows don't support runtime PM.
+	 * In this case, do it ourselves.
+	 */
+	if (enable && !sensor->is_rpm_supported) {
+		ret = ov8865_resume(subdev->dev);
+		return ret;
 	}
 
 	mutex_lock(&sensor->mutex);
@@ -2684,8 +2696,13 @@ static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 
 	state->streaming = !!enable;
 
-	if (!enable)
+	if (!enable && sensor->is_rpm_supported)
 		pm_runtime_put(sensor->dev);
+	/* Regular PCs designed for Windows don't support runtime PM.
+	 * In this case, do it ourselves.
+	 */
+	if (!enable && !sensor->is_rpm_supported)
+		ov8865_suspend(subdev->dev);
 
 	return 0;
 }
@@ -3195,6 +3212,9 @@ static int ov8865_probe(struct i2c_client *client)
 
 	pm_runtime_enable(sensor->dev);
 	pm_runtime_set_suspended(sensor->dev);
+
+	/* TODO: how to determine the runtime PM support state? */
+	sensor->is_rpm_supported = false;
 
 	return 0;
 
