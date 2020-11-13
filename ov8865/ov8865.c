@@ -3270,9 +3270,8 @@ static int ov8865_remove(struct i2c_client *client)
 		gpio_crs_put(sensor);
 
 	v4l2_async_unregister_subdev(subdev);
-	mutex_destroy(&sensor->mutex);
 	media_entity_cleanup(&subdev->entity);
-	v4l2_device_unregister_subdev(subdev);
+	v4l2_ctrl_handler_free(&sensor->ctrls.handler);
 	pm_runtime_disable(sensor->dev);
 
 	ov8865_sensor_power(sensor, false);
