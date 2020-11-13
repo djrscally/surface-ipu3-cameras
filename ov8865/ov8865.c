@@ -5,6 +5,7 @@
  * Author: Paul Kocialkowski <paul.kocialkowski@bootlin.com>
  */
 
+#include <linux/acpi.h>
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -3026,9 +3027,18 @@ static const struct of_device_id ov8865_of_match[] = {
 };
 MODULE_DEVICE_TABLE(of, ov8865_of_match);
 
+#ifdef CONFIG_ACPI
+static const struct acpi_device_id ov8865_acpi_ids[] = {
+	{"INT347A"},
+	{},
+};
+MODULE_DEVICE_TABLE(acpi, ov8865_acpi_ids);
+#endif
+
 static struct i2c_driver ov8865_driver = {
 	.driver = {
 		.of_match_table = ov8865_of_match,
+		.acpi_match_table = ACPI_PTR(ov8865_acpi_ids),
 		.pm = &ov8865_pm_ops,
 		.name = "ov8865",
 	},
