@@ -1318,14 +1318,14 @@ static int ov8865_read(struct ov8865_sensor *sensor, u16 address, u8 *value)
 
 	ret = i2c_master_send(client, data, sizeof(data));
 	if (ret < 0) {
-		dev_dbg(&client->dev, "i2c send error at address %#04x\n",
+		dev_err(&client->dev, "i2c send error at address %#04x\n",
 			address);
 		return ret;
 	}
 
 	ret = i2c_master_recv(client, value, 1);
 	if (ret < 0) {
-		dev_dbg(&client->dev, "i2c recv error at address %#04x\n",
+		dev_err(&client->dev, "i2c recv error at address %#04x\n",
 			address);
 		return ret;
 	}
@@ -1344,7 +1344,7 @@ static int ov8865_write(struct ov8865_sensor *sensor, u16 address, u8 value)
 
 	ret = i2c_master_send(client, data, sizeof(data));
 	if (ret < 0) {
-		dev_dbg(&client->dev, "i2c send error at address %#04x\n",
+		dev_err(&client->dev, "i2c send error at address %#04x\n",
 			address);
 		return ret;
 	}
