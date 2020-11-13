@@ -1554,7 +1554,15 @@ static unsigned long ov8865_mode_pll1_rate(struct ov8865_sensor *sensor,
 	unsigned long extclk_rate;
 	unsigned long pll1_rate;
 
-	extclk_rate = clk_get_rate(sensor->extclk);
+	/* For DT-based systems */
+	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+		extclk_rate = clk_get_rate(sensor->extclk);
+	else {
+		/* For ACPI-based systems */
+		/* TODO: how to get this value? */
+		extclk_rate = 24000000;
+	}
+
 	pll1_rate = extclk_rate * config->pll_mul / config->pll_pre_div_half;
 
 	switch (config->pll_pre_div) {
@@ -2398,7 +2406,7 @@ static int ov8865_sensor_init(struct ov8865_sensor *sensor)
 	return 0;
 }
 
-static int ov8865_sensor_power(struct ov8865_sensor *sensor, bool on)
+static int __ov8865_sensor_power_dt(struct ov8865_sensor *sensor, bool on)
 {
 	/* Keep initialized to zero for disable label. */
 	int ret = 0;
@@ -2450,6 +2458,17 @@ disable:
 		regulator_disable(sensor->avdd);
 		regulator_disable(sensor->dovdd);
 	}
+
+	return ret;
+}
+
+static int ov8865_sensor_power(struct ov8865_sensor *sensor, bool on)
+{
+	int ret;
+
+	/* For DT-based systems */
+	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+		ret = __ov8865_sensor_power_dt(sensor, on);
 
 	return ret;
 }
@@ -2897,52 +2916,55 @@ static int ov8865_probe(struct i2c_client *client)
 		return ret;
 	}
 
-	/* GPIOs */
+	/* For DT-based systems */
+	if (!is_acpi_node(dev_fwnode(dev))) {
+		/* GPIOs */
 
-	sensor->powerdown = devm_gpiod_get_optional(dev, "powerdown",
-						    GPIOD_OUT_HIGH);
-	if (IS_ERR(sensor->powerdown))
-		return PTR_ERR(sensor->powerdown);
+		sensor->powerdown = devm_gpiod_get_optional(dev, "powerdown",
+							GPIOD_OUT_HIGH);
+		if (IS_ERR(sensor->powerdown))
+			return PTR_ERR(sensor->powerdown);
 
-	sensor->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
-	if (IS_ERR(sensor->reset))
-		return PTR_ERR(sensor->reset);
+		sensor->reset = devm_gpiod_get_optional(dev, "reset", GPIOD_OUT_HIGH);
+		if (IS_ERR(sensor->reset))
+			return PTR_ERR(sensor->reset);
 
-	/* Regulators */
+		/* Regulators */
 
-	/* DVDD: digital core */
-	sensor->dvdd = devm_regulator_get(dev, "dvdd");
-	if (IS_ERR(sensor->dvdd)) {
-		dev_err(dev, "cannot get DVDD (digital core) regulator\n");
-		return PTR_ERR(sensor->dvdd);
-	}
+		/* DVDD: digital core */
+		sensor->dvdd = devm_regulator_get(dev, "dvdd");
+		if (IS_ERR(sensor->dvdd)) {
+			dev_err(dev, "cannot get DVDD (digital core) regulator\n");
+			return PTR_ERR(sensor->dvdd);
+		}
 
-	/* DOVDD: digital I/O */
-	sensor->dovdd = devm_regulator_get(dev, "dovdd");
-	if (IS_ERR(sensor->dvdd)) {
-		dev_err(dev, "cannot get DOVDD (digital I/O) regulator\n");
-		return PTR_ERR(sensor->dvdd);
-	}
+		/* DOVDD: digital I/O */
+		sensor->dovdd = devm_regulator_get(dev, "dovdd");
+		if (IS_ERR(sensor->dvdd)) {
+			dev_err(dev, "cannot get DOVDD (digital I/O) regulator\n");
+			return PTR_ERR(sensor->dvdd);
+		}
 
-	/* AVDD: analog */
-	sensor->avdd = devm_regulator_get(dev, "avdd");
-	if (IS_ERR(sensor->avdd)) {
-		dev_err(dev, "cannot get AVDD (analog) regulator\n");
-		return PTR_ERR(sensor->dvdd);
-	}
+		/* AVDD: analog */
+		sensor->avdd = devm_regulator_get(dev, "avdd");
+		if (IS_ERR(sensor->avdd)) {
+			dev_err(dev, "cannot get AVDD (analog) regulator\n");
+			return PTR_ERR(sensor->dvdd);
+		}
 
-	/* External Clock */
+		/* External Clock */
 
-	sensor->extclk = devm_clk_get(dev, NULL);
-	if (IS_ERR(sensor->extclk)) {
-		dev_err(dev, "failed to get external clock\n");
-		return PTR_ERR(sensor->extclk);
-	}
+		sensor->extclk = devm_clk_get(dev, NULL);
+		if (IS_ERR(sensor->extclk)) {
+			dev_err(dev, "failed to get external clock\n");
+			return PTR_ERR(sensor->extclk);
+		}
 
-	rate = clk_get_rate(sensor->extclk);
-	if (rate != OV8865_EXTCLK_RATE) {
-		dev_err(dev, "clock rate %lu Hz is unsupported\n", rate);
-		return -EINVAL;
+		rate = clk_get_rate(sensor->extclk);
+		if (rate != OV8865_EXTCLK_RATE) {
+			dev_err(dev, "clock rate %lu Hz is unsupported\n", rate);
+			return -EINVAL;
+		}
 	}
 
 	/* Subdev, entity and pad */
@@ -3004,7 +3026,9 @@ static int ov8865_remove(struct i2c_client *client)
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
 
-	clk_rate_exclusive_put(sensor->extclk);
+	/* For DT-based systems */
+	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+		clk_rate_exclusive_put(sensor->extclk);
 
 	v4l2_async_unregister_subdev(subdev);
 	mutex_destroy(&sensor->mutex);
