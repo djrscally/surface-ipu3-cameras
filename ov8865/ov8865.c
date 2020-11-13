@@ -693,6 +693,7 @@ struct ov8865_sensor {
 
 	bool is_rpm_supported;
 	bool is_acpi_based;
+	bool is_power_on;
 };
 
 /* Static definitions */
@@ -2335,8 +2336,14 @@ static int ov8865_state_configure(struct ov8865_sensor *sensor,
 		return -EBUSY;
 
 	/* State will be configured at first power on otherwise. */
-	if (pm_runtime_enabled(sensor->dev) &&
+	if (sensor->is_rpm_supported &&
+	    pm_runtime_enabled(sensor->dev) &&
 	    !pm_runtime_suspended(sensor->dev)) {
+		ret = ov8865_mode_configure(sensor, mode, mbus_code);
+		if (ret)
+			return ret;
+	}
+	if (!sensor->is_rpm_supported && sensor->is_power_on) {
 		ret = ov8865_mode_configure(sensor, mode, mbus_code);
 		if (ret)
 			return ret;
@@ -2541,6 +2548,11 @@ static int ov8865_sensor_power(struct ov8865_sensor *sensor, bool on)
 {
 	int ret;
 
+	if (on)
+		sensor->is_power_on = true;
+	else
+		sensor->is_power_on = false;
+
 	/* For DT-based systems */
 	if (!sensor->is_acpi_based)
 		ret = __ov8865_sensor_power_dt(sensor, on);
@@ -2562,7 +2574,9 @@ static int ov8865_s_ctrl(struct v4l2_ctrl *ctrl)
 	int ret;
 
 	/* Wait for the sensor to be on before setting controls. */
-	if (pm_runtime_suspended(sensor->dev))
+	if (sensor->is_rpm_supported && pm_runtime_suspended(sensor->dev))
+		return 0;
+	if (!sensor->is_rpm_supported && !sensor->is_power_on)
 		return 0;
 
 	switch (ctrl->id) {
