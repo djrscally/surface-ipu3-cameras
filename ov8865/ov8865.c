@@ -1,18 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
- * OmniVision OV8865 V4L2 driver
- *
  * Copyright 2020 Kévin L'hôpital <kevin.lhopital@bootlin.com>
  * Copyright 2020 Bootlin
  * Author: Paul Kocialkowski <paul.kocialkowski@bootlin.com>
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation version 2.
- *
- * This program is distributed .as is. WITHOUT ANY WARRANTY of any
- * kind, whether express or implied; without even the implied warranty
- * of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
  */
 
 #include <linux/clk.h>
@@ -21,6 +11,7 @@
 #include <linux/i2c.h>
 #include <linux/module.h>
 #include <linux/of_graph.h>
+#include <linux/pm_runtime.h>
 #include <linux/regulator/consumer.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-ctrls.h>
@@ -655,27 +646,15 @@ struct ov8865_state {
 	const struct ov8865_mode *mode;
 	u32 mbus_code;
 
-	int power_count;
 	bool streaming;
 };
 
 struct ov8865_ctrls {
-	struct v4l2_ctrl *exposure;
-	struct v4l2_ctrl *gain;
-
-	struct v4l2_ctrl *red_balance;
-	struct v4l2_ctrl *blue_balance;
-
-	struct v4l2_ctrl *flip_horz;
-	struct v4l2_ctrl *flip_vert;
-
-	struct v4l2_ctrl *test_pattern;
-
 	struct v4l2_ctrl *link_freq;
 	struct v4l2_ctrl *pixel_rate;
 
 	struct v4l2_ctrl_handler handler;
-} __packed;
+};
 
 struct ov8865_sensor {
 	struct device *dev;
@@ -727,6 +706,21 @@ static const struct ov8865_pll2_config ov8865_pll2_config_native = {
 	.pll_mul		= 30,
 	.dac_div		= 2,
 	.sys_pre_div		= 5,
+	.sys_div		= 0,
+};
+
+/*
+ * EXTCLK = 24 MHz
+ * DAC_CLK = 360 MHz
+ * SCLK = 80 MHz
+ */
+
+static const struct ov8865_pll2_config ov8865_pll2_config_binning = {
+	.pll_pre_div_half	= 1,
+	.pll_pre_div		= 0,
+	.pll_mul		= 30,
+	.dac_div		= 2,
+	.sys_pre_div		= 10,
 	.sys_div		= 0,
 };
 
@@ -814,131 +808,6 @@ static const struct ov8865_register_value ov8865_register_values_native[] = {
 	{ 0x4500, 0x68 },
 };
 
-static const struct ov8865_mode ov8865_mode_3264x2448 = {
-	/* Horizontal */
-	.output_size_x			= 3264,
-	.hts				= 1944,
-
-	/* Vertical */
-	.output_size_y			= 2448,
-	.vts				= 2470,
-
-	.size_auto			= true,
-	.size_auto_boundary_x		= 8,
-	.size_auto_boundary_y		= 4,
-
-	/* Subsample increase */
-	.inc_x_odd			= 1,
-	.inc_x_even			= 1,
-	.inc_y_odd			= 1,
-	.inc_y_even			= 1,
-
-	/* VFIFO */
-	.vfifo_read_start		= 16,
-
-	.ablc_num			= 4,
-	.zline_num			= 1,
-
-	/* Black Level */
-
-	.blc_top_zero_line_start	= 0,
-	.blc_top_zero_line_num		= 2,
-	.blc_top_black_line_start	= 4,
-	.blc_top_black_line_num		= 4,
-
-	.blc_bottom_zero_line_start	= 2,
-	.blc_bottom_zero_line_num	= 2,
-	.blc_bottom_black_line_start	= 8,
-	.blc_bottom_black_line_num	= 2,
-
-	.blc_anchor_left_start		= 576,
-	.blc_anchor_left_end		= 831,
-	.blc_anchor_right_start		= 1984,
-	.blc_anchor_right_end		= 2239,
-
-	/* Frame Interval */
-	.frame_interval			= { 1, 30 },
-
-	/* PLL */
-	.pll1_config		= &ov8865_pll1_config_native,
-	.pll2_config		= &ov8865_pll2_config_native,
-	.sclk_config		= &ov8865_sclk_config_native,
-
-	/* Registers */
-	.register_values	= ov8865_register_values_native,
-	.register_values_count	= ARRAY_SIZE(ov8865_register_values_native),
-};
-
-static const struct ov8865_mode ov8865_mode_3264x1836 = {
-	/* Horizontal */
-	.output_size_x			= 3264,
-	.hts				= 2582,
-
-	/* Vertical */
-	.output_size_y			= 1836,
-	.vts				= 2002,
-
-	.size_auto			= true,
-	.size_auto_boundary_x		= 8,
-	.size_auto_boundary_y		= 4,
-
-	/* Subsample increase */
-	.inc_x_odd			= 1,
-	.inc_x_even			= 1,
-	.inc_y_odd			= 1,
-	.inc_y_even			= 1,
-
-	/* VFIFO */
-	.vfifo_read_start		= 16,
-
-	.ablc_num			= 4,
-	.zline_num			= 1,
-
-	/* Black Level */
-
-	.blc_top_zero_line_start	= 0,
-	.blc_top_zero_line_num		= 2,
-	.blc_top_black_line_start	= 4,
-	.blc_top_black_line_num		= 4,
-
-	.blc_bottom_zero_line_start	= 2,
-	.blc_bottom_zero_line_num	= 2,
-	.blc_bottom_black_line_start	= 8,
-	.blc_bottom_black_line_num	= 2,
-
-	.blc_anchor_left_start		= 576,
-	.blc_anchor_left_end		= 831,
-	.blc_anchor_right_start		= 1984,
-	.blc_anchor_right_end		= 2239,
-
-	/* Frame Interval */
-	.frame_interval			= { 1, 30 },
-
-	/* PLL */
-	.pll1_config		= &ov8865_pll1_config_native,
-	.pll2_config		= &ov8865_pll2_config_native,
-	.sclk_config		= &ov8865_sclk_config_native,
-
-	/* Registers */
-	.register_values	= ov8865_register_values_native,
-	.register_values_count	= ARRAY_SIZE(ov8865_register_values_native),
-};
-
-/*
- * EXTCLK = 24 MHz
- * DAC_CLK = 360 MHz
- * SCLK = 80 MHz
- */
-
-static const struct ov8865_pll2_config ov8865_pll2_config_binning = {
-	.pll_pre_div_half	= 1,
-	.pll_pre_div		= 0,
-	.pll_mul		= 30,
-	.dac_div		= 2,
-	.sys_pre_div		= 10,
-	.sys_div		= 0,
-};
-
 static const struct ov8865_register_value ov8865_register_values_binning[] = {
 	/* Sensor */
 
@@ -1016,135 +885,245 @@ static const struct ov8865_register_value ov8865_register_values_binning[] = {
 	{ 0x4500, 0x40 },
 };
 
-static const struct ov8865_mode ov8865_mode_1632x1224 = {
-	/* Horizontal */
-	.output_size_x			= 1632,
-	.hts				= 1923,
+static const struct ov8865_mode ov8865_modes[] = {
+	/* 3264x2448 */
+	{
+		/* Horizontal */
+		.output_size_x			= 3264,
+		.hts				= 1944,
 
-	/* Vertical */
-	.output_size_y			= 1224,
-	.vts				= 1248,
+		/* Vertical */
+		.output_size_y			= 2448,
+		.vts				= 2470,
 
-	.size_auto			= true,
-	.size_auto_boundary_x		= 8,
-	.size_auto_boundary_y		= 8,
+		.size_auto			= true,
+		.size_auto_boundary_x		= 8,
+		.size_auto_boundary_y		= 4,
 
-	/* Subsample increase */
-	.inc_x_odd			= 3,
-	.inc_x_even			= 1,
-	.inc_y_odd			= 3,
-	.inc_y_even			= 1,
+		/* Subsample increase */
+		.inc_x_odd			= 1,
+		.inc_x_even			= 1,
+		.inc_y_odd			= 1,
+		.inc_y_even			= 1,
 
-	/* Binning */
-	.binning_y			= true,
-	.sync_hbin			= true,
+		/* VFIFO */
+		.vfifo_read_start		= 16,
 
-	/* VFIFO */
-	.vfifo_read_start		= 116,
+		.ablc_num			= 4,
+		.zline_num			= 1,
 
-	.ablc_num			= 8,
-	.zline_num			= 2,
+		/* Black Level */
 
-	/* Black Level */
+		.blc_top_zero_line_start	= 0,
+		.blc_top_zero_line_num		= 2,
+		.blc_top_black_line_start	= 4,
+		.blc_top_black_line_num		= 4,
 
-	.blc_top_zero_line_start	= 0,
-	.blc_top_zero_line_num		= 2,
-	.blc_top_black_line_start	= 4,
-	.blc_top_black_line_num		= 4,
+		.blc_bottom_zero_line_start	= 2,
+		.blc_bottom_zero_line_num	= 2,
+		.blc_bottom_black_line_start	= 8,
+		.blc_bottom_black_line_num	= 2,
 
-	.blc_bottom_zero_line_start	= 2,
-	.blc_bottom_zero_line_num	= 2,
-	.blc_bottom_black_line_start	= 8,
-	.blc_bottom_black_line_num	= 2,
+		.blc_anchor_left_start		= 576,
+		.blc_anchor_left_end		= 831,
+		.blc_anchor_right_start		= 1984,
+		.blc_anchor_right_end		= 2239,
 
-	.blc_anchor_left_start		= 288,
-	.blc_anchor_left_end		= 415,
-	.blc_anchor_right_start		= 992,
-	.blc_anchor_right_end		= 1119,
+		/* Frame Interval */
+		.frame_interval			= { 1, 30 },
 
-	/* Frame Interval */
-	.frame_interval			= { 1, 30 },
+		/* PLL */
+		.pll1_config			= &ov8865_pll1_config_native,
+		.pll2_config			= &ov8865_pll2_config_native,
+		.sclk_config			= &ov8865_sclk_config_native,
 
-	/* PLL */
-	.pll1_config		= &ov8865_pll1_config_native,
-	.pll2_config		= &ov8865_pll2_config_binning,
-	.sclk_config		= &ov8865_sclk_config_native,
+		/* Registers */
+		.register_values	= ov8865_register_values_native,
+		.register_values_count	=
+			ARRAY_SIZE(ov8865_register_values_native),
+	},
+	/* 3264x1836 */
+	{
+		/* Horizontal */
+		.output_size_x			= 3264,
+		.hts				= 2582,
 
-	/* Registers */
-	.register_values	= ov8865_register_values_binning,
-	.register_values_count	= ARRAY_SIZE(ov8865_register_values_binning),
-};
+		/* Vertical */
+		.output_size_y			= 1836,
+		.vts				= 2002,
 
-static const struct ov8865_mode ov8865_mode_svga = {
-	/* Horizontal */
-	.output_size_x			= 800,
-	.hts				= 1250,
+		.size_auto			= true,
+		.size_auto_boundary_x		= 8,
+		.size_auto_boundary_y		= 4,
 
-	/* Vertical */
-	.output_size_y			= 600,
-	.vts				= 640,
+		/* Subsample increase */
+		.inc_x_odd			= 1,
+		.inc_x_even			= 1,
+		.inc_y_odd			= 1,
+		.inc_y_even			= 1,
 
-	.size_auto			= true,
-	.size_auto_boundary_x		= 8,
-	.size_auto_boundary_y		= 8,
+		/* VFIFO */
+		.vfifo_read_start		= 16,
 
-	/* Subsample increase */
-	.inc_x_odd			= 3,
-	.inc_x_even			= 1,
-	.inc_y_odd			= 5,
-	.inc_y_even			= 3,
+		.ablc_num			= 4,
+		.zline_num			= 1,
 
-	/* Binning */
-	.binning_y			= true,
-	.variopixel			= true,
-	.variopixel_hsub_coef		= 2,
-	.variopixel_vsub_coef		= 1,
-	.sync_hbin			= true,
-	.horz_var2			= true,
+		/* Black Level */
 
-	/* VFIFO */
-	.vfifo_read_start		= 80,
+		.blc_top_zero_line_start	= 0,
+		.blc_top_zero_line_num		= 2,
+		.blc_top_black_line_start	= 4,
+		.blc_top_black_line_num		= 4,
 
-	.ablc_num			= 8,
-	.zline_num			= 2,
+		.blc_bottom_zero_line_start	= 2,
+		.blc_bottom_zero_line_num	= 2,
+		.blc_bottom_black_line_start	= 8,
+		.blc_bottom_black_line_num	= 2,
 
-	/* Black Level */
+		.blc_anchor_left_start		= 576,
+		.blc_anchor_left_end		= 831,
+		.blc_anchor_right_start		= 1984,
+		.blc_anchor_right_end		= 2239,
 
-	.blc_top_zero_line_start	= 0,
-	.blc_top_zero_line_num		= 2,
-	.blc_top_black_line_start	= 2,
-	.blc_top_black_line_num		= 2,
+		/* Frame Interval */
+		.frame_interval			= { 1, 30 },
 
-	.blc_bottom_zero_line_start	= 0,
-	.blc_bottom_zero_line_num	= 0,
-	.blc_bottom_black_line_start	= 4,
-	.blc_bottom_black_line_num	= 2,
+		/* PLL */
+		.pll1_config			= &ov8865_pll1_config_native,
+		.pll2_config			= &ov8865_pll2_config_native,
+		.sclk_config			= &ov8865_sclk_config_native,
 
-	.blc_col_shift_mask		= OV8865_BLC_CTRL1_COL_SHIFT_128,
+		/* Registers */
+		.register_values	= ov8865_register_values_native,
+		.register_values_count	=
+			ARRAY_SIZE(ov8865_register_values_native),
+	},
+	/* 1632x1224 */
+	{
+		/* Horizontal */
+		.output_size_x			= 1632,
+		.hts				= 1923,
 
-	.blc_anchor_left_start		= 288,
-	.blc_anchor_left_end		= 415,
-	.blc_anchor_right_start		= 992,
-	.blc_anchor_right_end		= 1119,
+		/* Vertical */
+		.output_size_y			= 1224,
+		.vts				= 1248,
 
-	/* Frame Interval */
-	.frame_interval			= { 1, 90 },
+		.size_auto			= true,
+		.size_auto_boundary_x		= 8,
+		.size_auto_boundary_y		= 8,
 
-	/* PLL */
-	.pll1_config		= &ov8865_pll1_config_native,
-	.pll2_config		= &ov8865_pll2_config_binning,
-	.sclk_config		= &ov8865_sclk_config_native,
+		/* Subsample increase */
+		.inc_x_odd			= 3,
+		.inc_x_even			= 1,
+		.inc_y_odd			= 3,
+		.inc_y_even			= 1,
 
-	/* Registers */
-	.register_values	= ov8865_register_values_binning,
-	.register_values_count	= ARRAY_SIZE(ov8865_register_values_binning),
-};
+		/* Binning */
+		.binning_y			= true,
+		.sync_hbin			= true,
 
-static const struct ov8865_mode *ov8865_modes[] = {
-	&ov8865_mode_3264x2448,
-	&ov8865_mode_3264x1836,
-	&ov8865_mode_1632x1224,
-	&ov8865_mode_svga,
+		/* VFIFO */
+		.vfifo_read_start		= 116,
+
+		.ablc_num			= 8,
+		.zline_num			= 2,
+
+		/* Black Level */
+
+		.blc_top_zero_line_start	= 0,
+		.blc_top_zero_line_num		= 2,
+		.blc_top_black_line_start	= 4,
+		.blc_top_black_line_num		= 4,
+
+		.blc_bottom_zero_line_start	= 2,
+		.blc_bottom_zero_line_num	= 2,
+		.blc_bottom_black_line_start	= 8,
+		.blc_bottom_black_line_num	= 2,
+
+		.blc_anchor_left_start		= 288,
+		.blc_anchor_left_end		= 415,
+		.blc_anchor_right_start		= 992,
+		.blc_anchor_right_end		= 1119,
+
+		/* Frame Interval */
+		.frame_interval			= { 1, 30 },
+
+		/* PLL */
+		.pll1_config			= &ov8865_pll1_config_native,
+		.pll2_config			= &ov8865_pll2_config_binning,
+		.sclk_config			= &ov8865_sclk_config_native,
+
+		/* Registers */
+		.register_values	= ov8865_register_values_binning,
+		.register_values_count	=
+			ARRAY_SIZE(ov8865_register_values_binning),
+	},
+	/* 800x600 (SVGA) */
+	{
+		/* Horizontal */
+		.output_size_x			= 800,
+		.hts				= 1250,
+
+		/* Vertical */
+		.output_size_y			= 600,
+		.vts				= 640,
+
+		.size_auto			= true,
+		.size_auto_boundary_x		= 8,
+		.size_auto_boundary_y		= 8,
+
+		/* Subsample increase */
+		.inc_x_odd			= 3,
+		.inc_x_even			= 1,
+		.inc_y_odd			= 5,
+		.inc_y_even			= 3,
+
+		/* Binning */
+		.binning_y			= true,
+		.variopixel			= true,
+		.variopixel_hsub_coef		= 2,
+		.variopixel_vsub_coef		= 1,
+		.sync_hbin			= true,
+		.horz_var2			= true,
+
+		/* VFIFO */
+		.vfifo_read_start		= 80,
+
+		.ablc_num			= 8,
+		.zline_num			= 2,
+
+		/* Black Level */
+
+		.blc_top_zero_line_start	= 0,
+		.blc_top_zero_line_num		= 2,
+		.blc_top_black_line_start	= 2,
+		.blc_top_black_line_num		= 2,
+
+		.blc_bottom_zero_line_start	= 0,
+		.blc_bottom_zero_line_num	= 0,
+		.blc_bottom_black_line_start	= 4,
+		.blc_bottom_black_line_num	= 2,
+
+		.blc_col_shift_mask	= OV8865_BLC_CTRL1_COL_SHIFT_128,
+
+		.blc_anchor_left_start		= 288,
+		.blc_anchor_left_end		= 415,
+		.blc_anchor_right_start		= 992,
+		.blc_anchor_right_end		= 1119,
+
+		/* Frame Interval */
+		.frame_interval			= { 1, 90 },
+
+		/* PLL */
+		.pll1_config			= &ov8865_pll1_config_native,
+		.pll2_config			= &ov8865_pll2_config_binning,
+		.sclk_config			= &ov8865_sclk_config_native,
+
+		/* Registers */
+		.register_values	= ov8865_register_values_binning,
+		.register_values_count	=
+			ARRAY_SIZE(ov8865_register_values_binning),
+	},
 };
 
 static const u32 ov8865_mbus_codes[] = {
@@ -1343,8 +1322,6 @@ static int ov8865_write(struct ov8865_sensor *sensor, u16 address, u8 value)
 	u8 value_prev;
 
 	ov8865_read(sensor, address, &value_prev);
-
-	printk(KERN_ERR "ov8865: %#04x <= %#02x from %#02x\n", address, value, value_prev);
 
 	ret = i2c_master_send(client, data, sizeof(data));
 	if (ret < 0) {
@@ -2255,11 +2232,16 @@ static int ov8865_flip_horz_configure(struct ov8865_sensor *sensor, bool enable)
 
 /* Test Pattern */
 
-static int ov8865_test_pattern_configure(struct ov8865_sensor *sensor, u8 bits)
+static int ov8865_test_pattern_configure(struct ov8865_sensor *sensor,
+					 unsigned int index)
 {
 	int ret;
 
-	ret = ov8865_write(sensor, OV8865_PRE_CTRL0_REG, bits);
+	if (index >= ARRAY_SIZE(ov8865_test_pattern_bits))
+		return -EINVAL;
+
+	ret = ov8865_write(sensor, OV8865_PRE_CTRL0_REG,
+			   ov8865_test_pattern_bits[index]);
 	if (ret)
 		return ret;
 
@@ -2326,7 +2308,8 @@ static int ov8865_state_configure(struct ov8865_sensor *sensor,
 		return -EBUSY;
 
 	/* State will be configured at first power on otherwise. */
-	if (sensor->state.power_count > 0) {
+	if (pm_runtime_enabled(sensor->dev) &&
+	    !pm_runtime_suspended(sensor->dev)) {
 		ret = ov8865_mode_configure(sensor, mode, mbus_code);
 		if (ret)
 			return ret;
@@ -2344,7 +2327,7 @@ static int ov8865_state_configure(struct ov8865_sensor *sensor,
 
 static int ov8865_state_init(struct ov8865_sensor *sensor)
 {
-	return ov8865_state_configure(sensor, ov8865_modes[0],
+	return ov8865_state_configure(sensor, &ov8865_modes[0],
 				      ov8865_mbus_codes[0]);
 }
 
@@ -2476,12 +2459,11 @@ static int ov8865_s_ctrl(struct v4l2_ctrl *ctrl)
 {
 	struct v4l2_subdev *subdev = ov8865_ctrl_subdev(ctrl);
 	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
-	struct ov8865_state *state = &sensor->state;
-	u8 bits;
+	unsigned int index;
 	int ret;
 
 	/* Wait for the sensor to be on before setting controls. */
-	if (state->power_count == 0)
+	if (pm_runtime_suspended(sensor->dev))
 		return 0;
 
 	switch (ctrl->id) {
@@ -2504,8 +2486,8 @@ static int ov8865_s_ctrl(struct v4l2_ctrl *ctrl)
 	case V4L2_CID_VFLIP:
 		return ov8865_flip_vert_configure(sensor, !!ctrl->val);
 	case V4L2_CID_TEST_PATTERN:
-		bits = ov8865_test_pattern_bits[ctrl->val];
-		return ov8865_test_pattern_configure(sensor, bits);
+		index = (unsigned int)ctrl->val;
+		return ov8865_test_pattern_configure(sensor, index);
 	default:
 		return -EINVAL;
 	}
@@ -2531,38 +2513,31 @@ static int ov8865_ctrls_init(struct ov8865_sensor *sensor)
 
 	/* Exposure */
 
-	ctrls->exposure = v4l2_ctrl_new_std(handler, ops, V4L2_CID_EXPOSURE,
-					    16, 1048575, 16, 512);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_EXPOSURE, 16, 1048575, 16,
+			  512);
 
 	/* Gain */
 
-	ctrls->gain = v4l2_ctrl_new_std(handler, ops, V4L2_CID_GAIN, 128, 8191,
-					128, 128);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_GAIN, 128, 8191, 128, 128);
 
 	/* White Balance */
 
-	ctrls->red_balance = v4l2_ctrl_new_std(handler, ops,
-					       V4L2_CID_RED_BALANCE, 1, 32767,
-					       1, 1024);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_RED_BALANCE, 1, 32767, 1,
+			  1024);
 
-	ctrls->blue_balance = v4l2_ctrl_new_std(handler, ops,
-						V4L2_CID_BLUE_BALANCE, 1, 32767,
-						1, 1024);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_BLUE_BALANCE, 1, 32767, 1,
+			  1024);
 
 	/* Flip */
 
-	ctrls->flip_horz = v4l2_ctrl_new_std(handler, ops, V4L2_CID_HFLIP, 0, 1,
-					     1, 0);
-	ctrls->flip_vert = v4l2_ctrl_new_std(handler, ops, V4L2_CID_VFLIP, 0, 1,
-					     1, 0);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_HFLIP, 0, 1, 1, 0);
+	v4l2_ctrl_new_std(handler, ops, V4L2_CID_VFLIP, 0, 1, 1, 0);
 
 	/* Test Pattern */
 
-	ctrls->test_pattern =
-		v4l2_ctrl_new_std_menu_items(handler, ops,
-					     V4L2_CID_TEST_PATTERN,
-					     ARRAY_SIZE(ov8865_test_pattern_menu) - 1,
-					     0, 0, ov8865_test_pattern_menu);
+	v4l2_ctrl_new_std_menu_items(handler, ops, V4L2_CID_TEST_PATTERN,
+				     ARRAY_SIZE(ov8865_test_pattern_menu) - 1,
+				     0, 0, ov8865_test_pattern_menu);
 
 	/* MIPI CSI-2 */
 
@@ -2593,73 +2568,35 @@ error_ctrls:
 	return ret;
 }
 
-/* Subdev Core Operations */
-
-static int ov8865_s_power(struct v4l2_subdev *subdev, int on)
-{
-	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
-	struct ov8865_state *state = &sensor->state;
-	bool ctrl_handler_setup = false;
-	int ret = 0;
-
-	mutex_lock(&sensor->mutex);
-
-	state->power_count += on ? 1 : -1;
-
-	/* Neither first power on nor last power off. */
-	if (state->power_count != !!on)
-		goto complete;
-
-	ret = ov8865_sensor_power(sensor, on);
-	if (ret)
-		goto complete;
-
-	/* First power on: init sensor and set controls. */
-	if (on) {
-		ret = ov8865_sensor_init(sensor);
-		if (ret)
-			goto error_power;
-
-		ctrl_handler_setup = true;
-	}
-
-	goto complete;
-
-error_power:
-	ov8865_sensor_power(sensor, !on);
-
-complete:
-	mutex_unlock(&sensor->mutex);
-
-	if (ctrl_handler_setup)
-		ret = v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
-
-	return ret;
-}
-
-static const struct v4l2_subdev_core_ops ov8865_subdev_core_ops = {
-	.s_power		= ov8865_s_power,
-};
-
 /* Subdev Video Operations */
 
 static int ov8865_s_stream(struct v4l2_subdev *subdev, int enable)
 {
 	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
+	struct ov8865_state *state = &sensor->state;
 	int ret = 0;
 
+	if (enable) {
+		ret = pm_runtime_get_sync(sensor->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(sensor->dev);
+			return ret;
+		}
+	}
+
 	mutex_lock(&sensor->mutex);
-
 	ret = ov8865_sw_standby(sensor, !enable);
-	if (ret)
-		goto complete;
-
-	sensor->state.streaming = !!enable;
-
-complete:
 	mutex_unlock(&sensor->mutex);
 
-	return ret;
+	if (ret)
+		return ret;
+
+	state->streaming = !!enable;
+
+	if (!enable)
+		pm_runtime_put(sensor->dev);
+
+	return 0;
 }
 
 static int ov8865_g_frame_interval(struct v4l2_subdev *subdev,
@@ -2744,8 +2681,8 @@ static int ov8865_set_fmt(struct v4l2_subdev *subdev,
 {
 	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
 	struct v4l2_mbus_framefmt *mbus_format = &format->format;
-	const struct ov8865_mode *mode = ov8865_modes[0];
-	u32 mbus_code = ov8865_mbus_codes[0];
+	const struct ov8865_mode *mode;
+	u32 mbus_code = 0;
 	unsigned int index;
 	int ret = 0;
 
@@ -2764,14 +2701,16 @@ static int ov8865_set_fmt(struct v4l2_subdev *subdev,
 		}
 	}
 
-	/* Try to find requested mode code. */
-	for (index = 0; index < ARRAY_SIZE(ov8865_modes); index++) {
-		if (ov8865_modes[index]->output_size_x == mbus_format->width &&
-		    ov8865_modes[index]->output_size_y == mbus_format->height) {
-			mode = ov8865_modes[index];
-			break;
-		}
-	}
+	/* Fallback to default. */
+	if (!mbus_code)
+		mbus_code = ov8865_mbus_codes[0];
+
+	/* Find the mode with nearest dimensions. */
+	mode = v4l2_find_nearest_size(ov8865_modes, ARRAY_SIZE(ov8865_modes),
+				      output_size_x, output_size_y,
+				      mbus_format->width, mbus_format->height);
+	if (!mode)
+		return -EINVAL;
 
 	ov8865_mbus_format_fill(mbus_format, mbus_code, mode);
 
@@ -2800,7 +2739,7 @@ static int ov8865_enum_frame_size(struct v4l2_subdev *subdev,
 	if (size_enum->index >= ARRAY_SIZE(ov8865_modes))
 		return -EINVAL;
 
-	mode = ov8865_modes[size_enum->index];
+	mode = &ov8865_modes[size_enum->index];
 
 	size_enum->min_width = size_enum->max_width = mode->output_size_x;
 	size_enum->min_height = size_enum->max_height = mode->output_size_y;
@@ -2824,7 +2763,7 @@ static int ov8865_enum_frame_interval(struct v4l2_subdev *subdev,
 	 */
 	for (mode_index = 0, interval_index = 0;
 	     mode_index < ARRAY_SIZE(ov8865_modes); mode_index++) {
-		mode = ov8865_modes[mode_index];
+		mode = &ov8865_modes[mode_index];
 
 		if (mode->output_size_x == interval_enum->width &&
 		    mode->output_size_y == interval_enum->height) {
@@ -2852,10 +2791,76 @@ static const struct v4l2_subdev_pad_ops ov8865_subdev_pad_ops = {
 };
 
 static const struct v4l2_subdev_ops ov8865_subdev_ops = {
-	.core		= &ov8865_subdev_core_ops,
 	.video		= &ov8865_subdev_video_ops,
 	.pad		= &ov8865_subdev_pad_ops,
 };
+
+static int __maybe_unused ov8865_suspend(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
+	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
+	struct ov8865_state *state = &sensor->state;
+	int ret = 0;
+
+	mutex_lock(&sensor->mutex);
+
+	if (state->streaming) {
+		ret = ov8865_sw_standby(sensor, true);
+		if (ret)
+			goto complete;
+	}
+
+	ret = ov8865_sensor_power(sensor, false);
+	if (ret) {
+		ov8865_sw_standby(sensor, false);
+		goto complete;
+	}
+
+complete:
+	mutex_unlock(&sensor->mutex);
+
+	return ret;
+}
+
+static int __maybe_unused ov8865_resume(struct device *dev)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
+	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
+	struct ov8865_state *state = &sensor->state;
+	int ret = 0;
+
+	mutex_lock(&sensor->mutex);
+
+	ret = ov8865_sensor_power(sensor, true);
+	if (ret)
+		goto complete;
+
+	ret = ov8865_sensor_init(sensor);
+	if (ret)
+		goto error_power;
+
+	ret = __v4l2_ctrl_handler_setup(&sensor->ctrls.handler);
+	if (ret)
+		goto error_power;
+
+	if (state->streaming) {
+		ret = ov8865_sw_standby(sensor, false);
+		if (ret)
+			goto error_power;
+	}
+
+	goto complete;
+
+error_power:
+	ov8865_sensor_power(sensor, false);
+
+complete:
+	mutex_unlock(&sensor->mutex);
+
+	return ret;
+}
 
 static int ov8865_probe(struct i2c_client *client)
 {
@@ -2864,6 +2869,7 @@ static int ov8865_probe(struct i2c_client *client)
 	struct ov8865_sensor *sensor;
 	struct v4l2_subdev *subdev;
 	struct media_pad *pad;
+	unsigned long rate;
 	int ret;
 
 	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
@@ -2926,16 +2932,16 @@ static int ov8865_probe(struct i2c_client *client)
 
 	/* External Clock */
 
-	sensor->extclk = devm_clk_get(dev, "extclk");
+	sensor->extclk = devm_clk_get(dev, NULL);
 	if (IS_ERR(sensor->extclk)) {
-		dev_err(dev, "failed to get extclk external clock\n");
+		dev_err(dev, "failed to get external clock\n");
 		return PTR_ERR(sensor->extclk);
 	}
 
-	ret = clk_set_rate_exclusive(sensor->extclk, OV8865_EXTCLK_RATE);
-	if (ret) {
-		dev_err(dev, "failed to set extclk external clock rate\n");
-		return ret;
+	rate = clk_get_rate(sensor->extclk);
+	if (rate != OV8865_EXTCLK_RATE) {
+		dev_err(dev, "clock rate %lu Hz is unsupported\n", rate);
+		return -EINVAL;
 	}
 
 	/* Subdev, entity and pad */
@@ -2973,6 +2979,11 @@ static int ov8865_probe(struct i2c_client *client)
 	if (ret)
 		goto error_ctrls;
 
+	/* Runtime PM */
+
+	pm_runtime_enable(sensor->dev);
+	pm_runtime_set_suspended(sensor->dev);
+
 	return 0;
 
 error_ctrls:
@@ -2998,15 +3009,16 @@ static int ov8865_remove(struct i2c_client *client)
 	mutex_destroy(&sensor->mutex);
 	media_entity_cleanup(&subdev->entity);
 	v4l2_device_unregister_subdev(subdev);
+	pm_runtime_disable(sensor->dev);
+
+	ov8865_sensor_power(sensor, false);
 
 	return 0;
 }
 
-static const struct i2c_device_id ov8865_id[] = {
-	{ "ov8865", 0 },
-	{ }
+static const struct dev_pm_ops ov8865_pm_ops = {
+	SET_RUNTIME_PM_OPS(ov8865_suspend, ov8865_resume, NULL)
 };
-MODULE_DEVICE_TABLE(i2c, ov8865_id);
 
 static const struct of_device_id ov8865_of_match[] = {
 	{ .compatible = "ovti,ov8865" },
@@ -3017,11 +3029,11 @@ MODULE_DEVICE_TABLE(of, ov8865_of_match);
 static struct i2c_driver ov8865_driver = {
 	.driver = {
 		.of_match_table = ov8865_of_match,
-		.name	= "ov8865",
+		.pm = &ov8865_pm_ops,
+		.name = "ov8865",
 	},
 	.probe_new = ov8865_probe,
 	.remove	 = ov8865_remove,
-	.id_table = ov8865_id,
 };
 
 module_i2c_driver(ov8865_driver);
