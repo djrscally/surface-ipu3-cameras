@@ -3081,6 +3081,8 @@ static int ov8865_probe(struct i2c_client *client)
 	unsigned long rate;
 	int ret;
 
+	dev_info(dev, "%s() called\n", __func__);
+
 	sensor = devm_kzalloc(dev, sizeof(*sensor), GFP_KERNEL);
 	if (!sensor)
 		return -ENOMEM;
@@ -3234,6 +3236,8 @@ static int ov8865_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *subdev = i2c_get_clientdata(client);
 	struct ov8865_sensor *sensor = ov8865_subdev_sensor(subdev);
+
+	dev_info(&client->dev, "%s() called\n", __func__);
 
 	/* For DT-based systems */
 	if (!is_acpi_node(dev_fwnode(sensor->dev)))
