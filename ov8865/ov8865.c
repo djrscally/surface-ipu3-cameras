@@ -24,6 +24,8 @@
 static int __maybe_unused ov8865_suspend(struct device *dev);
 static int __maybe_unused ov8865_resume(struct device *dev);
 
+#define OV8865_ACPI_HID "INT347A"
+
 /* Clock rate */
 
 #define OV8865_EXTCLK_RATE			24000000
@@ -690,6 +692,7 @@ struct ov8865_sensor {
 	struct gpio_desc *led_gpio;
 
 	bool is_rpm_supported;
+	bool is_acpi_based;
 };
 
 /* Static definitions */
@@ -1570,7 +1573,7 @@ static unsigned long ov8865_mode_pll1_rate(struct ov8865_sensor *sensor,
 	unsigned long pll1_rate;
 
 	/* For DT-based systems */
-	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+	if (!sensor->is_acpi_based)
 		extclk_rate = clk_get_rate(sensor->extclk);
 	else {
 		/* For ACPI-based systems */
@@ -2539,7 +2542,7 @@ static int ov8865_sensor_power(struct ov8865_sensor *sensor, bool on)
 	int ret;
 
 	/* For DT-based systems */
-	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+	if (!sensor->is_acpi_based)
 		ret = __ov8865_sensor_power_dt(sensor, on);
 	else {
 		/* For ACPI-based systems */
@@ -3090,8 +3093,15 @@ static int ov8865_probe(struct i2c_client *client)
 	sensor->dev = dev;
 	sensor->i2c_client = client;
 
+	if (acpi_dev_present(OV8865_ACPI_HID, NULL, -1)) {
+		dev_info(dev, "system is acpi-based\n");
+		sensor->is_acpi_based = true;
+	} else {
+		dev_info(dev, "system is not acpi-based\n");
+	}
+
 	/* For DT-based systems */
-	if (!is_acpi_node(dev_fwnode(dev))) {
+	if (!sensor->is_acpi_based) {
 		/* Graph Endpoint */
 
 		handle = fwnode_graph_get_next_endpoint(dev_fwnode(dev), NULL);
@@ -3111,7 +3121,7 @@ static int ov8865_probe(struct i2c_client *client)
 	}
 
 	/* For DT-based systems */
-	if (!is_acpi_node(dev_fwnode(dev))) {
+	if (!sensor->is_acpi_based) {
 		/* GPIOs */
 
 		sensor->powerdown = devm_gpiod_get_optional(dev, "powerdown",
@@ -3162,7 +3172,7 @@ static int ov8865_probe(struct i2c_client *client)
 	}
 
 	/* For ACPI-based systems */
-	if (is_acpi_node(dev_fwnode(dev))) {
+	if (sensor->is_acpi_based) {
 		sensor->dep_dev = get_dep_dev(&client->dev);
 		if (IS_ERR(sensor->dep_dev)) {
 			ret = PTR_ERR(sensor->dep_dev);
@@ -3243,11 +3253,11 @@ static int ov8865_remove(struct i2c_client *client)
 	dev_info(&client->dev, "%s() called\n", __func__);
 
 	/* For DT-based systems */
-	if (!is_acpi_node(dev_fwnode(sensor->dev)))
+	if (!sensor->is_acpi_based)
 		clk_rate_exclusive_put(sensor->extclk);
 
 	/* For ACPI-based systems */
-	if (is_acpi_node(dev_fwnode(sensor->dev)))
+	if (sensor->is_acpi_based)
 		gpio_crs_put(sensor);
 
 	v4l2_async_unregister_subdev(subdev);
