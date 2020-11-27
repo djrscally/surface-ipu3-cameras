@@ -32,6 +32,7 @@
 #include <media/v4l2-device.h>
 #include <linux/io.h>
 #include <linux/acpi.h>
+#include <linux/regulator/consumer.h>
 
 #include "ov5693.h"
 #include "ad5823.h"
@@ -960,60 +961,15 @@ static int ov5693_init(struct v4l2_subdev *sd)
 	return 0;
 }
 
-/* Get GPIOs defined in dep_dev _CRS */
-static int gpio_crs_get(struct ov5693_device *sensor, struct device *dep_dev)
-{
-	sensor->dep_gpios = devm_gpiod_get_array_optional(dep_dev, NULL, GPIOD_ASIS);
-	if (IS_ERR(sensor->dep_gpios)) {
-		dev_err(dep_dev, "Failed to get GPIOs\n");
-		return -ENODEV;
-	}
-
-	return 0;
-}
-
-/* Put GPIOs defined in dep_dev _CRS */
-static void gpio_crs_put(struct ov5693_device *sensor)
-{
-	struct gpio_descs *d = sensor->dep_gpios;
-
-	if (!d)
-		return;
-
-	gpiod_put_array(d);
-}
-
-/* Control GPIOs defined in dep_dev _CRS */
-static int gpio_crs_ctrl(struct ov5693_device *sensor, bool flag)
-{
-	struct gpio_descs *d = sensor->dep_gpios;
-	unsigned long *values;
-
-	if (!d)
-		return 0;
-
-	values = bitmap_alloc(d->ndescs, GFP_KERNEL);
-	if (!values)
-		return -ENOMEM;
-
-	if (flag)
-		bitmap_fill(values, d->ndescs);
-	else
-		bitmap_zero(values, d->ndescs);
-
-	gpiod_set_array_value_cansleep(d->ndescs, d->desc,
-				       d->info, values);
-
-	return 0;
-}
-
 static int __power_up(struct v4l2_subdev *sd)
 {
 	struct i2c_client *client = v4l2_get_subdevdata(sd);
 	struct ov5693_device *sensor = to_ov5693_sensor(sd);
 	int ret;
 
-	ret = gpio_crs_ctrl(sensor, true);
+        gpiod_set_value_cansleep(sensor->indicator_led, 1);
+
+	ret = regulator_bulk_enable(OV5693_NUM_SUPPLIES, sensor->supplies);
 	if (ret)
 		goto fail_power;
 
@@ -1022,7 +978,7 @@ static int __power_up(struct v4l2_subdev *sd)
 	return 0;
 
 fail_power:
-	gpio_crs_ctrl(sensor, false);
+        gpiod_set_value_cansleep(sensor->indicator_led, 0);
 	dev_err(&client->dev, "sensor power-up failed\n");
 
 	return ret;
@@ -1034,7 +990,9 @@ static int power_down(struct v4l2_subdev *sd)
 
 	dev->focus = OV5693_INVALID_CONFIG;
 
-	return gpio_crs_ctrl(dev, false);
+        gpiod_set_value_cansleep(dev->indicator_led, 0);
+
+	return regulator_bulk_disable(OV5693_NUM_SUPPLIES, dev->supplies);
 }
 
 static int power_up(struct v4l2_subdev *sd)
@@ -1228,7 +1186,7 @@ static int ov5693_set_fmt(struct v4l2_subdev *sd,
 	}
 
 	for (cnt = 0; cnt < OV5693_POWER_UP_RETRY_NUM; cnt++) {
-		power_down(sd);
+//		power_down(sd);
 		ret = power_up(sd);
 		if (ret) {
 			dev_err(&client->dev, "power up failed\n");
@@ -1333,7 +1291,7 @@ static int ov5693_s_stream(struct v4l2_subdev *sd, int enable)
 		ret = power_up(sd);
 		if (ret) {
 			dev_err(&client->dev, "sensor power-up error\n");
-			power_down(sd);
+//			power_down(sd);
 			goto out;
 		}
 	}
@@ -1363,11 +1321,11 @@ static int ov5693_s_config(struct v4l2_subdev *sd, int irq)
 	 * as first power on by board may not fulfill the
 	 * power on sequqence needed by the module
 	 */
-	ret = power_down(sd);
-	if (ret) {
-		dev_err(&client->dev, "ov5693 power-off err.\n");
-		goto fail_power_off;
-	}
+//	ret = power_down(sd);
+//	if (ret) {
+//		dev_err(&client->dev, "ov5693 power-off err.\n");
+//		goto fail_power_off;
+//	}
 
 	ret = power_up(sd);
 	if (ret) {
@@ -1473,8 +1431,7 @@ static int ov5693_remove(struct i2c_client *client)
 
 	dev_info(&client->dev, "%s...\n", __func__);
 
-	gpio_crs_put(ov5693);
-
+        gpiod_put(ov5693->reset);
 	v4l2_async_unregister_subdev(sd);
 
 	media_entity_cleanup(&ov5693->sd.entity);
@@ -1526,119 +1483,39 @@ static int ov5693_init_controls(struct ov5693_device *ov5693)
 	return 0;
 }
 
-/* Get acpi_device of dependent INT3472 device */
-static struct acpi_device *get_dep_adev(struct device *dev)
+static int ov5693_configure_gpios(struct ov5693_device *ov5693)
 {
-	struct acpi_handle *dev_handle;
-	struct acpi_device *sensor_adev;
-	struct acpi_handle_list dep_devices;
-	struct acpi_device *dep_adev;
-	acpi_status status;
-	const char *dep_hid = "INT3472";
-	int i;
+        ov5693->reset = gpiod_get_index(&ov5693->client->dev, "reset", 0,
+                                        GPIOD_OUT_HIGH);
+        if (IS_ERR(ov5693->reset)) {
+                dev_err(&ov5693->client->dev, "Couldn't find reset GPIO\n");
+                return -EINVAL;
+        }
 
-	sensor_adev = acpi_dev_get_first_match_dev(OV5693_HID, NULL, -1);
-	if (!sensor_adev) {
-		dev_err(dev, "Couldn't get sensor ACPI device\n");
-		return ERR_PTR(-ENODEV);
-	}
-	dev_handle = sensor_adev->handle;
-	acpi_dev_put(sensor_adev);
-
-	if (!acpi_has_method(dev_handle, "_DEP")) {
-		dev_err(dev, "No _DEP entry found\n");
-		return ERR_PTR(-ENODEV);
-	}
-
-	status = acpi_evaluate_reference(dev_handle, "_DEP", NULL, &dep_devices);
-	if (ACPI_FAILURE(status)) {
-		dev_err(dev, "Failed to evaluate _DEP.\n");
-		return ERR_PTR(-ENODEV);
-	}
-
-	for (i = 0; i < dep_devices.count; i++) {
-		struct acpi_device_info *info;
-		int match;
-
-		status = acpi_get_object_info(dep_devices.handles[i], &info);
-		if (ACPI_FAILURE(status)) {
-			dev_dbg(dev,
-				"Error reading _DEP device info, continue next\n");
-			continue;
-		}
-
-		match = info->valid & ACPI_VALID_HID &&
-			!strcmp(info->hardware_id.string, dep_hid);
-
-		kfree(info);
-
-		if (!match)
-			continue;
-
-		if (acpi_bus_get_device(dep_devices.handles[i], &dep_adev)) {
-			dev_err(dev, "Error getting dependent ACPI device\n");
-			return ERR_PTR(-ENODEV);
-		}
-
-		/* found acpi_device of dependent device */
-		break;
-	}
-
-	if (!dep_adev) {
-		dev_err(dev, "Dependent ACPI device not found\n");
-		return ERR_PTR(-ENODEV);
-	}
-
-	dev_info(dev, "Dependent ACPI device found: %s\n",
-		 dev_name(&dep_adev->dev));
-
-	return dep_adev;
+        ov5693->indicator_led = gpiod_get_index(&ov5693->client->dev, "indicator-led", 0,
+                                        GPIOD_OUT_HIGH);
+        if (IS_ERR(ov5693->indicator_led)) {
+                dev_err(&ov5693->client->dev, "Couldn't find indicator-led GPIO\n");
+                return -EINVAL;
+        }
+        return 0;
 }
 
-/* Get dependent INT3472 device */
-static struct device *get_dep_dev(struct device *dev)
+static int ov5693_get_regulators(struct ov5693_device *ov5693)
 {
-	struct acpi_device *dep_adev;
-	struct acpi_device_physical_node *dep_phys;
+	unsigned int i;
 
-	dep_adev = get_dep_adev(dev);
-	if (!dep_adev) {
-		dev_err(dev, "get_dep_adev() failed\n");
-		return ERR_PTR(-ENODEV);
-	}
+	for (i = 0; i < OV5693_NUM_SUPPLIES; i++)
+		ov5693->supplies[i].supply = ov5693_supply_names[i];
 
-	/*
-	 * HACK: We know that the PMIC is a "discrete" PMIC, an ACPI device
-	 * that just serves as a container to list system GPIOs.
-	 *
-	 * The ACPI device has no fwnode, nor does it have a platform device.
-	 * This prevents fetching GPIOs. It however seems to be backed by the
-	 * PCI root complex (pci0000:00/0000:00:00.0) as its physical device,
-	 * and that device has its fwnode set to \_SB.PCI0.DSC1. Whether this
-	 * is correct or not is unknown, let's just get the physical device and
-	 * move on for now.
-	 *
-	 * (@kitakar5525)This is observed on Microsoft Surface Go series
-	 * and Acer Switch Alpha 12.
-	 */
-	dep_phys = list_first_entry_or_null(&dep_adev->physical_node_list,
-					    struct acpi_device_physical_node,
-					    node);
-	if (!dep_phys) {
-		dev_info(dev,
-			 "Error getting physical node of dependent device\n");
-		return ERR_PTR(-ENODEV);
-	}
-
-	dev_info(dev, "Dependent device found: %s\n", dev_name(dep_phys->dev));
-
-	return dep_phys->dev;
+	return devm_regulator_bulk_get(&ov5693->client->dev,
+				       OV5693_NUM_SUPPLIES,
+				       ov5693->supplies); 
 }
 
 static int ov5693_probe(struct i2c_client *client)
 {
 	struct ov5693_device *ov5693;
-	struct device *dep_dev;
 	int ret = 0;
 
 	dev_info(&client->dev, "%s() called", __func__);
@@ -1646,6 +1523,8 @@ static int ov5693_probe(struct i2c_client *client)
 	ov5693 = kzalloc(sizeof(*ov5693), GFP_KERNEL);
 	if (!ov5693)
 		return -ENOMEM;
+
+        ov5693->client = client;
 
 	/* check if VCM device exists */
 	/* TODO: read from SSDB */
@@ -1655,23 +1534,17 @@ static int ov5693_probe(struct i2c_client *client)
 
 	v4l2_i2c_subdev_init(&ov5693->sd, client, &ov5693_ops);
 
-	ov5693->dep_dev = get_dep_dev(&client->dev);
-	if (IS_ERR(ov5693->dep_dev)) {
-		ret = PTR_ERR(ov5693->dep_dev);
-		dev_err(&client->dev, "cannot get dep_dev: ret %d\n", ret);
-		return ret;
-	}
-	dep_dev = ov5693->dep_dev;
+        ret = ov5693_configure_gpios(ov5693);
+        if (ret)
+                goto out_free;
 
-	ret = gpio_crs_get(ov5693, dep_dev);
-	if (ret) {
-		dev_err(dep_dev, "Failed to get _CRS GPIOs\n");
-		return ret;
-	}
+        ret = ov5693_get_regulators(ov5693);
+        if (ret)
+                goto out_put_reset;
 
 	ret = ov5693_s_config(&ov5693->sd, client->irq);
 	if (ret)
-		goto out_free;
+		goto out_put_reset;
 
 	ov5693->sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	ov5693->pad.flags = MEDIA_PAD_FL_SOURCE;
@@ -1696,6 +1569,8 @@ static int ov5693_probe(struct i2c_client *client)
 
 media_entity_cleanup:
 	media_entity_cleanup(&ov5693->sd.entity);
+out_put_reset:
+        gpiod_put(ov5693->reset);
 out_free:
 	v4l2_device_unregister_subdev(&ov5693->sd);
 	kfree(ov5693);

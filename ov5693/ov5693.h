@@ -193,6 +193,12 @@ static const s64 link_freq_menu_items[] = {
 	OV5693_LINK_FREQ_640MHZ
 };
 
+#define OV5693_NUM_SUPPLIES             2
+static const char * const ov5693_supply_names[] = {
+        "avdd",
+        "dovdd",
+};
+
 struct regval_list {
 	u16 reg_num;
 	u8 value;
@@ -230,11 +236,16 @@ enum vcm_type {
  * ov5693 device structure.
  */
 struct ov5693_device {
+        struct i2c_client *client;
 	struct v4l2_subdev sd;
 	struct media_pad pad;
 	struct v4l2_mbus_framefmt format;
 	struct mutex input_lock;
 	struct v4l2_ctrl_handler ctrl_handler;
+
+        struct gpio_desc *reset;
+        struct gpio_desc *indicator_led;
+        struct regulator_bulk_data supplies[OV5693_NUM_SUPPLIES];
 
 	struct camera_sensor_platform_data *platform_data;
 	ktime_t timestamp_t_focus_abs;
@@ -249,12 +260,6 @@ struct ov5693_device {
 	u8 type;
 	bool vcm_update;
 	enum vcm_type vcm;
-
-	/* dependent device (PMIC) */
-	struct device *dep_dev;
-
-	/* GPIOs defined in dep_dev _CRS */
-	struct gpio_descs *dep_gpios;
 
 	bool has_vcm;
 };
