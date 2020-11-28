@@ -967,7 +967,8 @@ static int __power_up(struct v4l2_subdev *sd)
 	struct ov5693_device *sensor = to_ov5693_sensor(sd);
 	int ret;
 
-        gpiod_set_value_cansleep(sensor->indicator_led, 1);
+        if (sensor->indicator_led)
+                gpiod_set_value_cansleep(sensor->indicator_led, 1);
 
 	ret = regulator_bulk_enable(OV5693_NUM_SUPPLIES, sensor->supplies);
 	if (ret)
@@ -978,7 +979,8 @@ static int __power_up(struct v4l2_subdev *sd)
 	return 0;
 
 fail_power:
-        gpiod_set_value_cansleep(sensor->indicator_led, 0);
+        if (sensor->indicator_led)
+                gpiod_set_value_cansleep(sensor->indicator_led, 0);
 	dev_err(&client->dev, "sensor power-up failed\n");
 
 	return ret;
@@ -990,7 +992,8 @@ static int power_down(struct v4l2_subdev *sd)
 
 	dev->focus = OV5693_INVALID_CONFIG;
 
-        gpiod_set_value_cansleep(dev->indicator_led, 0);
+        if (dev->indicator_led)
+                gpiod_set_value_cansleep(dev->indicator_led, 0);
 
 	return regulator_bulk_disable(OV5693_NUM_SUPPLIES, dev->supplies);
 }
@@ -1498,8 +1501,8 @@ static int ov5693_configure_gpios(struct ov5693_device *ov5693)
                 return -EINVAL;
         }
 
-        ov5693->indicator_led = gpiod_get_index(&ov5693->client->dev, "indicator-led", 0,
-                                        GPIOD_OUT_HIGH);
+        ov5693->indicator_led = gpiod_get_index_optional(&ov5693->client->dev, "indicator-led", 0,
+                                                         GPIOD_OUT_HIGH);
         if (IS_ERR(ov5693->indicator_led)) {
                 dev_err(&ov5693->client->dev, "Couldn't find indicator-led GPIO\n");
                 return -EINVAL;
